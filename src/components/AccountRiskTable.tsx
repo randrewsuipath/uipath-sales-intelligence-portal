@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { ProcessedAccount } from '@/utils/riskScoring';
 import { getRiskBadgeClasses } from '@/utils/riskScoring';
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
@@ -9,6 +10,7 @@ interface AccountRiskTableProps {
   accounts: ProcessedAccount[];
 }
 export function AccountRiskTable({ accounts }: AccountRiskTableProps) {
+  const navigate = useNavigate();
   const [sortField, setSortField] = useState<SortField>('riskScore');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const handleSort = (field: SortField) => {
@@ -122,7 +124,11 @@ export function AccountRiskTable({ accounts }: AccountRiskTableProps) {
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {sortedAccounts.map((account) => (
-              <tr key={account.accountId} className="hover:bg-gray-50">
+              <tr
+                key={account.accountId}
+                className="hover:bg-gray-50 cursor-pointer transition-colors"
+                onClick={() => navigate(`/accounts/${account.accountId}`)}
+              >
                 <td className="px-4 py-3 text-sm font-medium text-gray-900 whitespace-nowrap">
                   {account.accountName}
                 </td>
