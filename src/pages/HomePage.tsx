@@ -1,148 +1,203 @@
-// Home page of the app, Currently a demo page for demonstration.
-// Please rewrite this file to implement your own logic. Do not replace or delete it, simply rewrite this HomePage.tsx file.
-import { useEffect } from 'react'
-import { Sparkles } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { ThemeToggle } from '@/components/ThemeToggle'
-import { Toaster, toast } from '@/components/ui/sonner'
-import { create } from 'zustand'
-import { useShallow } from 'zustand/react/shallow'
-import { AppLayout } from '@/components/layout/AppLayout'
-
-// Timer store: independent slice with a clear, minimal API, for demonstration
-type TimerState = {
-  isRunning: boolean;
-  elapsedMs: number;
-  start: () => void;
-  pause: () => void;
-  reset: () => void;
-  tick: (deltaMs: number) => void;
-}
-
-const useTimerStore = create<TimerState>((set) => ({
-  isRunning: false,
-  elapsedMs: 0,
-  start: () => set({ isRunning: true }),
-  pause: () => set({ isRunning: false }),
-  reset: () => set({ elapsedMs: 0, isRunning: false }),
-  tick: (deltaMs) => set((s) => ({ elapsedMs: s.elapsedMs + deltaMs })),
-}))
-
-// Counter store: separate slice to showcase multiple stores without coupling
-type CounterState = {
-  count: number;
-  inc: () => void;
-  reset: () => void;
-}
-
-const useCounterStore = create<CounterState>((set) => ({
-  count: 0,
-  inc: () => set((s) => ({ count: s.count + 1 })),
-  reset: () => set({ count: 0 }),
-}))
-
-function formatDuration(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000))
-  const m = Math.floor(total / 60)
-  const s = total % 60
-  return `${m}:${s.toString().padStart(2, '0')}`
-}
-
+import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { useAuth } from '@/hooks/useAuth';
+import { Entities } from '@uipath/uipath-typescript/entities';
+import type { EntityRecord } from '@uipath/uipath-typescript/entities';
+import { usePolling } from '@/hooks/usePolling';
+import { calculateRiskScore, type ProcessedAccount } from '@/utils/riskScoring';
+import { AppLayout } from '@/components/layout/AppLayout';
+import { MetricCard } from '@/components/MetricCard';
+import { AccountRiskTable } from '@/components/AccountRiskTable';
+import { AlertCircle, TrendingDown, DollarSign, Users } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 export function HomePage() {
-  // Select only what is needed to avoid unnecessary re-renders
-  const { isRunning, elapsedMs } = useTimerStore(
-    useShallow((s) => ({ isRunning: s.isRunning, elapsedMs: s.elapsedMs })),
-  )
-  const start = useTimerStore((s) => s.start)
-  const pause = useTimerStore((s) => s.pause)
-  const resetTimer = useTimerStore((s) => s.reset)
-  const count = useCounterStore((s) => s.count)
-  const inc = useCounterStore((s) => s.inc)
-  const resetCount = useCounterStore((s) => s.reset)
-
-  // Drive the timer only while running; avoid update-depth issues with a scoped RAF
+  const { sdk, isAuthenticated } = useAuth();
+  const entities = useMemo(() => (sdk ? new Entities(sdk) : null), [sdk]);
+  const [entityId, setEntityId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // Find AccountUtilisationMetrics entity on mount
   useEffect(() => {
-    if (!isRunning) return
-    let raf = 0
-    let last = performance.now()
-    const loop = () => {
-      const now = performance.now()
-      const delta = now - last
-      last = now
-      // Read store API directly to keep effect deps minimal and stable
-      useTimerStore.getState().tick(delta)
-      raf = requestAnimationFrame(loop)
+    if (!entities || !isAuthenticated) return;
+    const findEntity = async () => {
+      try {
+        const allEntities = await entities.getAll();
+        const target = allEntities.find(e => e.name === 'AccountUtilisationMetrics');
+        if (!target) {
+          setError('AccountUtilisationMetrics entity not found in Data Fabric');
+          return;
+        }
+        setEntityId(target.id);
+      } catch (err) {
+        console.error('Failed to load entities:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load entities');
+      }
+    };
+    findEntity();
+  }, [entities, isAuthenticated]);
+  const fetchAccounts = useCallback(async () => {
+    if (!entities || !entityId) return [];
+    try {
+      const result = await entities.getAllRecords(entityId, { pageSize: 500, expansionLevel: 1 });
+      return result.items;
+    } catch (err) {
+      console.error('Failed to fetch account records:', err);
+      throw err;
     }
-    raf = requestAnimationFrame(loop)
-    return () => cancelAnimationFrame(raf)
-  }, [isRunning])
-
-  const onPleaseWait = () => {
-    inc()
-    if (!isRunning) {
-      start()
-      toast.success('Building your app…', {
-        description: 'Hang tight, we\'re setting everything up.',
-      })
-    } else {
-      pause()
-      toast.info('Taking a short pause', {
-        description: 'We\'ll continue shortly.',
-      })
+  }, [entities, entityId]);
+  const { data: rawRecords, isLoading, isActive } = usePolling<EntityRecord[]>({
+    fetchFn: fetchAccounts,
+    interval: 300000, // 5 minutes
+    enabled: isAuthenticated && !!entityId,
+    immediate: true,
+    deps: [entityId],
+  });
+  // Accumulate and process accounts - flicker prevention
+  const lastRecordsRef = useRef<EntityRecord[] | null>(null);
+  const lastEntityIdRef = useRef(entityId);
+  const accumulatedAccountsRef = useRef<Map<string, EntityRecord>>(new Map());
+  if (entityId !== lastEntityIdRef.current) {
+    lastEntityIdRef.current = entityId;
+    lastRecordsRef.current = null;
+    accumulatedAccountsRef.current = new Map();
+  }
+  if (rawRecords) lastRecordsRef.current = rawRecords;
+  const displayRecords = lastRecordsRef.current;
+  if (displayRecords) {
+    for (const record of displayRecords) {
+      const accountId = record.accountId as string;
+      if (accountId) {
+        accumulatedAccountsRef.current.set(accountId, record);
+      }
     }
   }
-
-  const formatted = formatDuration(elapsedMs)
-
-  return (
-    <AppLayout>
-      <div className="min-h-screen flex flex-col items-center justify-center bg-background text-foreground p-4 overflow-hidden relative">
-        <ThemeToggle />
-        <div className="absolute inset-0 bg-gradient-rainbow opacity-10 dark:opacity-20 pointer-events-none" />
-        <div className="text-center space-y-8 relative z-10 animate-fade-in">
-          <div className="flex justify-center">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-primary flex items-center justify-center shadow-primary floating">
-              <Sparkles className="w-8 h-8 text-white rotating" />
-            </div>
-          </div>
-          <h1 className="text-5xl md:text-7xl font-display font-bold text-balance leading-tight">
-            Creating your <span className="text-gradient">app</span>
-          </h1>
-          <p className="text-lg md:text-xl text-muted-foreground max-w-xl mx-auto text-pretty">
-            Your application would be ready soon.
-          </p>
-          <div className="flex justify-center gap-4">
-            <Button 
-              size="lg"
-              onClick={onPleaseWait}
-              className="btn-gradient px-8 py-4 text-lg font-semibold hover:-translate-y-0.5 transition-all duration-200"
-              aria-live="polite"
-            >
-              Please Wait
-            </Button>
-          </div>
-          <div className="flex items-center justify-center gap-6 text-sm text-muted-foreground">
-            <div>
-              Time elapsed: <span className="font-medium tabular-nums text-foreground">{formatted}</span>
-            </div>
-            <div>
-              Coins: <span className="font-medium tabular-nums text-foreground">{count}</span>
-            </div>
-          </div>
-          <div className="flex justify-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => { resetTimer(); resetCount(); toast('Reset complete') }}>
-              Reset
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => { inc(); toast('Coin added') }}>
-              Add Coin
-            </Button>
+  const processedAccounts: ProcessedAccount[] = useMemo(() => {
+    const records = [...accumulatedAccountsRef.current.values()];
+    return records.map(record => {
+      const account: ProcessedAccount = {
+        accountId: record.accountId as string,
+        accountName: record.accountName as string,
+        region: (record.region as string) || 'Unknown',
+        accountDirector: (record.accountDirector as string) || 'Unassigned',
+        tam: (record.tam as string) || 'Unassigned',
+        csm: (record.csm as string) || 'Unassigned',
+        arr: typeof record.arr === 'number' ? record.arr : 0,
+        robotUtilisationPct: typeof record.robotUtilisationPct === 'number' ? record.robotUtilisationPct : 0,
+        aiUtilisationPct: typeof record.aiUtilisationPct === 'number' ? record.aiUtilisationPct : 0,
+        agenticUtilisationPct: typeof record.agenticUtilisationPct === 'number' ? record.agenticUtilisationPct : 0,
+        licenceExpiryDate: (record.licenceExpiryDate as string) || null,
+        lastSyncTime: (record.lastSyncTime as string) || new Date().toISOString(),
+        riskScore: 0,
+        riskLevel: 'Low',
+        avgUtilisation: 0,
+      };
+      const risk = calculateRiskScore(account);
+      account.riskScore = risk.score;
+      account.riskLevel = risk.level;
+      account.avgUtilisation = risk.avgUtilisation;
+      return account;
+    }).sort((a, b) => b.riskScore - a.riskScore);
+  }, [displayRecords]);
+  const metrics = useMemo(() => {
+    const atRiskAccounts = processedAccounts.filter(a => a.riskLevel === 'Critical' || a.riskLevel === 'High');
+    const revenueAtRisk = atRiskAccounts.reduce((sum, a) => sum + a.arr, 0);
+    const totalUtilisation = processedAccounts.length > 0
+      ? processedAccounts.reduce((sum, a) => sum + a.avgUtilisation, 0) / processedAccounts.length
+      : 0;
+    return {
+      totalAccounts: processedAccounts.length,
+      atRiskCount: atRiskAccounts.length,
+      revenueAtRisk,
+      avgUtilisation: totalUtilisation,
+    };
+  }, [processedAccounts]);
+  const topRiskAccounts = useMemo(() => processedAccounts.slice(0, 20), [processedAccounts]);
+  if (!isAuthenticated) {
+    return (
+      <AppLayout container>
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="text-center space-y-4">
+            <h2 className="text-2xl font-semibold text-gray-900">Authentication Required</h2>
+            <p className="text-gray-600">Please log in to access the Sales Intelligence Portal</p>
           </div>
         </div>
-        <footer className="absolute bottom-8 text-center text-muted-foreground/80">
-          <p>Powered by Cloudflare</p>
+      </AppLayout>
+    );
+  }
+  if (error) {
+    return (
+      <AppLayout container>
+        <Alert variant="destructive" className="mt-8">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      </AppLayout>
+    );
+  }
+  if (!displayRecords) {
+    return (
+      <AppLayout container>
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="text-center space-y-4">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto" />
+            <p className="text-sm text-gray-500">Loading account data...</p>
+          </div>
+        </div>
+      </AppLayout>
+    );
+  }
+  return (
+    <AppLayout container>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-900">Executive Dashboard</h1>
+            <p className="text-sm text-gray-500 mt-1">Account health overview and risk analysis</p>
+          </div>
+          {isActive && (
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+              <span>Live</span>
+            </div>
+          )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <MetricCard
+            title="Total Accounts"
+            value={metrics.totalAccounts}
+            icon={Users}
+            iconColor="text-blue-600"
+            iconBg="bg-blue-100"
+          />
+          <MetricCard
+            title="At-Risk Accounts"
+            value={metrics.atRiskCount}
+            icon={AlertCircle}
+            iconColor="text-red-600"
+            iconBg="bg-red-100"
+            subtitle={`${((metrics.atRiskCount / metrics.totalAccounts) * 100 || 0).toFixed(1)}% of total`}
+          />
+          <MetricCard
+            title="Revenue at Risk"
+            value={`$${(metrics.revenueAtRisk / 1000000).toFixed(1)}M`}
+            icon={DollarSign}
+            iconColor="text-orange-600"
+            iconBg="bg-orange-100"
+          />
+          <MetricCard
+            title="Avg Utilisation"
+            value={`${metrics.avgUtilisation.toFixed(1)}%`}
+            icon={TrendingDown}
+            iconColor="text-gray-600"
+            iconBg="bg-gray-100"
+          />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Top 20 At-Risk Accounts</h2>
+          <AccountRiskTable accounts={topRiskAccounts} />
+        </div>
+        <footer className="text-center text-xs text-gray-400 pt-8 pb-4">
+          © Powered by UiPath
         </footer>
-        <Toaster richColors closeButton />
       </div>
     </AppLayout>
-  )
+  );
 }
