@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { RiskLevel } from '@/utils/riskScoring';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Slider } from '@/components/ui/slider';
 import { Checkbox } from '@/components/ui/checkbox';
