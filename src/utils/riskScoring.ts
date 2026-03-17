@@ -21,7 +21,18 @@ interface RiskScoreResult {
   level: RiskLevel;
   avgUtilisation: number;
 }
-// Default thresholds - will be configurable in Phase 4
+export interface RiskConfig {
+  robotLowUtilisationThreshold?: number;
+  aiLowUtilisationThreshold?: number;
+  agenticLowUtilisationThreshold?: number;
+  expiryWarningDays?: number;
+  riskScoreWeights?: {
+    utilisation: number;
+    trend: number;
+    expiry: number;
+    arr: number;
+  };
+}
 const DEFAULT_THRESHOLDS = {
   lowUtilisation: 30,
   expiryWarningDays: 90,
@@ -32,38 +43,37 @@ const DEFAULT_THRESHOLDS = {
     arr: 0.1,
   },
 };
-export function calculateRiskScore(account: ProcessedAccount): RiskScoreResult {
+export function calculateRiskScore(account: ProcessedAccount, config?: RiskConfig): RiskScoreResult {
   const { robotUtilisationPct, aiUtilisationPct, agenticUtilisationPct, licenceExpiryDate, arr } = account;
-  // Calculate average utilisation
+  const robotThreshold = config?.robotLowUtilisationThreshold ?? DEFAULT_THRESHOLDS.lowUtilisation;
+  const aiThreshold = config?.aiLowUtilisationThreshold ?? DEFAULT_THRESHOLDS.lowUtilisation;
+  const agenticThreshold = config?.agenticLowUtilisationThreshold ?? DEFAULT_THRESHOLDS.lowUtilisation;
+  const expiryDays = config?.expiryWarningDays ?? DEFAULT_THRESHOLDS.expiryWarningDays;
+  const weights = config?.riskScoreWeights ?? DEFAULT_THRESHOLDS.weights;
   const avgUtilisation = (robotUtilisationPct + aiUtilisationPct + agenticUtilisationPct) / 3;
-  // Utilisation component (0-1, higher = worse)
   const utilisationScore = Math.max(0, (100 - avgUtilisation) / 100);
-  // Trend penalty (placeholder - will need historical data for real trend calculation)
-  // For now, penalise if any metric is below threshold
-  const belowThreshold = [robotUtilisationPct, aiUtilisationPct, agenticUtilisationPct].filter(
-    pct => pct < DEFAULT_THRESHOLDS.lowUtilisation
-  ).length;
+  const belowThreshold = [
+    robotUtilisationPct < robotThreshold ? 1 : 0,
+    aiUtilisationPct < aiThreshold ? 1 : 0,
+    agenticUtilisationPct < agenticThreshold ? 1 : 0,
+  ].reduce((sum, val) => sum + val, 0);
   const trendPenalty = belowThreshold / 3;
-  // Expiry proximity component (0-1, higher = worse)
   let expiryScore = 0;
   if (licenceExpiryDate) {
     const expiryDate = new Date(licenceExpiryDate);
     const now = new Date();
     const daysUntilExpiry = Math.max(0, (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    if (daysUntilExpiry <= DEFAULT_THRESHOLDS.expiryWarningDays) {
-      expiryScore = 1 - (daysUntilExpiry / DEFAULT_THRESHOLDS.expiryWarningDays);
+    if (daysUntilExpiry <= expiryDays) {
+      expiryScore = 1 - daysUntilExpiry / expiryDays;
     }
   }
-  // ARR component (normalised 0-1, higher ARR = higher risk impact)
-  // Assume max ARR of $10M for normalisation
   const arrScore = Math.min(1, arr / 10000000);
-  // Composite score (0-100)
-  const compositeScore = (
-    utilisationScore * DEFAULT_THRESHOLDS.weights.utilisation +
-    trendPenalty * DEFAULT_THRESHOLDS.weights.trend +
-    expiryScore * DEFAULT_THRESHOLDS.weights.expiry +
-    arrScore * DEFAULT_THRESHOLDS.weights.arr
-  ) * 100;
+  const compositeScore =
+    (utilisationScore * weights.utilisation +
+      trendPenalty * weights.trend +
+      expiryScore * weights.expiry +
+      arrScore * weights.arr) *
+    100;
   const level = getRiskLevel(compositeScore);
   return {
     score: Math.round(compositeScore),

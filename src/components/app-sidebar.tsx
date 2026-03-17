@@ -44,8 +44,8 @@ export function AppSidebar(): JSX.Element {
           <SidebarGroupLabel>Settings</SidebarGroupLabel>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton asChild>
-                <a href="#"><Settings /> <span>Configuration</span></a>
+              <SidebarMenuButton asChild isActive={location.pathname === '/settings'}>
+                <Link to="/settings"><Settings /> <span>Configuration</span></Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>

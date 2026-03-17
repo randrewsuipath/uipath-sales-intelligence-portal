@@ -10,6 +10,7 @@ import '@/index.css'
 import { HomePage } from '@/pages/HomePage'
 import { AccountsPage } from '@/pages/AccountsPage'
 import { AccountDetailPage } from '@/pages/AccountDetailPage'
+import { SettingsPage } from '@/pages/SettingsPage'
 // Do not touch this code
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -20,6 +21,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/" element={<HomePage />} />
             <Route path="/accounts" element={<AccountsPage />} />
             <Route path="/accounts/:accountId" element={<AccountDetailPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>
