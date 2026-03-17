@@ -77,7 +77,12 @@ function updateWranglerJsonc() {
 }
 
 function runSetupCommands() {
-    const commands = [];
+    const commands = [
+    "bun add lodash@^4.17.21",
+    "bun add @types/lodash@^4.17.13",
+    "bun add jspdf@^2.5.2",
+    "bun add html2canvas@^1.4.1"
+];
     
     if (commands.length === 0) {
         console.log('⊘ No setup commands to run');
