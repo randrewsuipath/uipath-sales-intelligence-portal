@@ -2,7 +2,7 @@
 
 A professional sales-facing dashboard for UiPath Sales Directors and leadership to monitor cloud platform utilisation across their customer accounts. The portal surfaces critical account health metrics by reading real-time data from Snowflake via UiPath Data Fabric entities, presenting unattended robot utilisation, AI unit consumption, and agentic automation adoption in a clean, actionable interface.
 
-[cloudflarebutton]
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/randrewsuipath/uipath-sales-intelligence-portal)
 
 ## Overview
 
@@ -164,7 +164,7 @@ The project uses:
 
 ### Cloudflare Pages
 
-[cloudflarebutton]
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/randrewsuipath/uipath-sales-intelligence-portal)
 
 #### Manual Deployment
 
