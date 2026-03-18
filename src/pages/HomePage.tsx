@@ -9,9 +9,10 @@ import { MetricCard } from '@/components/MetricCard';
 import { AccountRiskTable } from '@/components/AccountRiskTable';
 import { AlertCircle, TrendingDown, DollarSign, Users } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 export function HomePage() {
-  const { sdk, isAuthenticated } = useAuth();
-  const entities = useMemo(() => (sdk ? new Entities(sdk) : null), [sdk]);
+  const { sdk, isAuthenticated, login, logout } = useAuth();
+  const entities = useMemo(() => (sdk && isAuthenticated ? new Entities(sdk) : null), [sdk, isAuthenticated]);
   const [entityId, setEntityId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Find AccountUtilisationMetrics entity on mount
@@ -28,11 +29,19 @@ export function HomePage() {
         setEntityId(target.id);
       } catch (err) {
         console.error('Failed to load entities:', err);
+        
+        // Check for 401 Unauthorized - token expired or invalid
+        if (err && typeof err === 'object' && 'status' in err && err.status === 401) {
+          logout();
+          setError('Authentication expired. Please log in again.');
+          return;
+        }
+        
         setError(err instanceof Error ? err.message : 'Failed to load entities');
       }
     };
     findEntity();
-  }, [entities, isAuthenticated]);
+  }, [entities, isAuthenticated, logout]);
   const fetchAccounts = useCallback(async () => {
     if (!entities || !entityId) return [];
     try {
@@ -117,18 +126,32 @@ export function HomePage() {
           <div className="text-center space-y-4">
             <h2 className="text-2xl font-semibold text-gray-900">Authentication Required</h2>
             <p className="text-gray-600">Please log in to access the Sales Intelligence Portal</p>
+            <Button onClick={login} size="lg" className="mt-4">
+              Log In
+            </Button>
           </div>
         </div>
       </AppLayout>
     );
   }
   if (error) {
+    const isAuthError = error.toLowerCase().includes('authentication') || 
+                        error.toLowerCase().includes('401') || 
+                        error.toLowerCase().includes('unauthorized');
+    
     return (
       <AppLayout container>
         <Alert variant="destructive" className="mt-8">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{error}</AlertDescription>
         </Alert>
+        {isAuthError && (
+          <div className="flex justify-center mt-4">
+            <Button onClick={login} size="lg">
+              Log In
+            </Button>
+          </div>
+        )}
       </AppLayout>
     );
   }
